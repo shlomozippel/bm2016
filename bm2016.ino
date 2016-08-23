@@ -4,6 +4,7 @@
 #include <EEPROM.h>
 #include "btn.h"
 #include "timer.h"
+#include "sparkle_receiver.h"
 
 //----------------------------------------------------------------------------------
 // General stuff
@@ -21,8 +22,8 @@
 //----------------------------------------------------------------------------------
 
 // uncomment just one of these
-#define LED_KEYCHAIN
-//#define PRO_MINI_WEARABLE
+//#define LED_KEYCHAIN
+#define PRO_MINI_WEARABLE
 //#define ARTBOAT
 
 #ifdef LED_KEYCHAIN
@@ -153,6 +154,33 @@ void disable_autocycle() {
     write_state();
 }
 
+void brightness_up() {
+ switch (g_brightness) {
+      case 0 ... 15: g_brightness += 1; break;
+      case 16 ... 100: g_brightness += 15; break;
+      case 101 ... (0xff - 30): g_brightness += 30; break;
+      case (0xff - 30 + 1) ... 254: g_brightness = 255; break;
+      case 255: break;
+  } 
+}
+
+void brightness_down() {
+  switch (g_brightness) {
+      case 0: break;
+      case 1 ... 15: g_brightness -= 1; break;
+      case 16 ... 100: g_brightness -= 15; break;
+      case 101 ... 255: g_brightness -= 30; break;
+  }            
+}
+
+void mode_button() {
+    if (pattern_timer.running()) {
+      disable_autocycle();
+    } else {
+      next_pattern();
+    }
+}
+
 void read_state() {
     uint8_t buffer = 0;
     // autocycle
@@ -217,17 +245,15 @@ void setup() {
   read_state();
 }
 
+
+
 void loop() {
   g_now = millis();
   
   // mode button. long press enables auto_cycle, short press changes to next pattern
   btn_mode.poll(
     []() {
-      if (pattern_timer.running()) {
-        disable_autocycle();
-      } else {
-        next_pattern();
-      }
+      mode_button();
     },
     []() {
        enable_autocycle();
@@ -245,7 +271,7 @@ void loop() {
   #endif
 
   // radio stuff
-  #if HAS_RADIO
+  #ifdef HAS_RADIO
   if (radio.available()) {
      radio.read(&event, sizeof(event));
 
@@ -260,7 +286,22 @@ void loop() {
      }
 
      // keyfob stuff
-     // TODO
+     // right
+     if (event.button == 23) {
+        mode_button();
+     }
+     // left
+     if (event.button == 27) {
+        enable_autocycle();
+     }
+     // down
+     if (event.button == 29) {
+        brightness_down();     
+     }
+     // up
+     if (event.button == 30) {
+        brightness_up();
+     }
   }
   #endif
      
@@ -269,15 +310,7 @@ void loop() {
   #ifdef LED_KEYCHAIN
   btn_brightness_up.poll(
         /* Brightness UP pressed */
-        []() {
-            switch (g_brightness) {
-                case 0 ... 15: g_brightness += 1; break;
-                case 16 ... 100: g_brightness += 15; break;
-                case 101 ... (0xff - 30): g_brightness += 30; break;
-                case (0xff - 30 + 1) ... 254: g_brightness = 255; break;
-                case 255: break;
-            }
-        },
+        brightness_up,
         /* Brightness UP held */
         []() {
             if (g_brightness < 0xff) {
@@ -289,15 +322,7 @@ void loop() {
 
    btn_brightness_down.poll(
         /* Brightness DOWN pressed */
-        []() {
-            switch (g_brightness) {
-                case 0: break;
-                case 1 ... 15: g_brightness -= 1; break;
-                case 16 ... 100: g_brightness -= 15; break;
-                case 101 ... 255: g_brightness -= 30; break;
-            }
-            
-        },
+        brightness_down,
         /* Brightness DOWN held */
         []() {
             if (g_brightness > 0) {
@@ -329,6 +354,17 @@ void loop() {
   FastLED.setBrightness(brightness);
 
   uint32_t d = (patterns)[g_current_pattern]();
+
+  // add sparkle?
+  #ifdef HAS_RADIO
+  prune_sparkles(g_now - 1100);
+  for (int i=0; i<number_of_sparkles(); i++) {
+    if (random8() < 100) {
+        leds[ random16(NUM_LEDS) ] += CRGB::White;
+    }
+  }
+  #endif
+  
   FastLED.show();
   if (d == 0) d = 1000/120;
   FastLED.delay(d);
